@@ -30,3 +30,7 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Phase 0 轮子拆解：第三方开源仓库，仅供只读分析，绝不能进入版本库。
+# 本仓库已公开，一旦 git add 会把他人源码一并发布出去。
+wheels/
