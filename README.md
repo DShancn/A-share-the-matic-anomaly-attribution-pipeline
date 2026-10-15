@@ -37,8 +37,8 @@
 ## 30 秒跑起来
 
 ```bash
-git clone https://github.com/ds1828743190-oss/alibabashiyong.git
-cd alibabashiyong && uv venv && uv pip install -e .
+git clone https://github.com/ds1828743190-oss/A-share-the-matic-anomaly-attribution-pipeline.git
+cd A-share-the-matic-anomaly-attribution-pipeline && uv venv && uv pip install -e .
 
 .venv/bin/vest snapshot 2026-10-14     # 摄取上一交易日
 .venv/bin/vest anomalies 2026-10-14    # 异动题材排行
