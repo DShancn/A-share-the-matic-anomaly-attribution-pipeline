@@ -56,8 +56,9 @@ def snapshot(conn: duckdb.DuckDBPyConnection, day: str | None = None) -> dict:
     missing = sum(1 for r in hot if r.get("pct_chg") is None)
     if missing == len(hot):
         raise RuntimeError(
-            f"{hot[0]['trade_date']} 上游未返回任何价格字段（{missing}/{len(hot)} 缺失），"
-            "说明当日尚未收盘结算。请在 15:30 之后重新执行 snapshot。"
+            f"{hot[0]['trade_date']} 上游未返回任何价格字段（{missing}/{len(hot)} 缺失）。"
+            "同花顺的价格字段要到交易日 T 的次日才结算，改传上一个交易日重试，"
+            "不要等当天——实测 T 日 17:14 仍未结算。"
         )
     if missing:
         print(f"  ! 警告: {missing}/{len(hot)} 只缺失价格字段", file=sys.stderr)

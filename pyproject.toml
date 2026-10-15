@@ -5,8 +5,13 @@ description = "个人价值投资归因管线"
 requires-python = ">=3.10"
 dependencies = ["requests", "duckdb", "tzdata"]
 
+[project.optional-dependencies]
+# mcp 必须 pin >=2,<3：2.x 把 FastMCP 改名为 MCPServer，1.x 写法不可用
+mcp = ["mcp>=2,<3"]
+
 [project.scripts]
 vest = "vest.cli:main"
+vest-mcp = "vest.mcp_server:main"
 
 [build-system]
 requires = ["hatchling"]

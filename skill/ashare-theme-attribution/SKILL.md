@@ -45,7 +45,12 @@ command -v vest || command -v vest.exe \
 - 若能定位仓库根（含 `pyproject.toml` 与 `src/vest/` 的目录），在其中执行 `uv pip install -e .`（或 `pip install -e .`）后重试
 - 否则走下方降级路径
 
-再确认时刻：**北京时间早于 15:30 时不要跑 `snapshot`**（见 T1）。直接告知用户需等收盘结算，或改为对**历史交易日**跑归因。注意用北京时间判断，不要用宿主机本地时间。
+再确认**归因对象**。同花顺热点接口的价格字段在交易日 T 当天不结算：实测 T 日 17:14 仍只返回
+`id/name/code/reason/date/market` 六个键，而 T-1 日返回 13 个字段且价格完整。确切结算点在
+「T 日 17:14 之后 ~ T+1 日 12:43 之前」之间，尚未测出边界。
+
+**因此归因对象必须是上一个交易日，不是今天。** 若用户问「今天为什么涨」，如实说明当日数据要到
+次日才结算，可以先对上一个交易日跑归因。注意用北京时间判断，不要用宿主机本地时间。
 
 **vest 不在场时的降级路径**：按 [references/data-sources.md](references/data-sources.md) 自行取数（三个源全部零鉴权），把证据整理成 `[{"publish_ts": ..., "ts_precision": ...}]` 交给 [scripts/bucket_evidence.py](scripts/bucket_evidence.py) 分桶，再手写卡片 JSON。该脚本仅依赖标准库，Python 3.9+ 即可运行。分桶这一步**不要靠心算**。
 
@@ -54,10 +59,12 @@ command -v vest || command -v vest.exe \
 ### 1. 快照：摄取强势股并聚合题材轴
 
 ```bash
-vest snapshot [YYYY-MM-DD]     # 幂等，可重复跑
+vest snapshot <上一个交易日>     # 幂等，可重复跑。不要传今天
 ```
 
 题材轴由同花顺 `reason` tags 按 `+` 拆词聚合得出，**不依赖概念板块成分股接口**，因此无需 APIKey，且对「AI短剧」这类尚未纳入正式概念分类的新题材同样有效。
+
+非交易日返回 `hot_stock: 0`，此时往前再找一个工作日重试，最多回退 7 个自然日；全部为 0 则如实报告无数据，不要编造。
 
 ### 2. 异动排行
 
@@ -114,7 +121,7 @@ vest review <card_id> "<实际观察到的结果>"       # review_at 到期时�
 
 | # | 症状 | 根因 |
 |---|---|---|
-| T1 | `anomalies` 返回 0 个，快照有几十行但价格全 NULL | 同花顺 getharden 盘中不返回价格字段，须北京时间 15:30 后跑 |
+| T1 | `anomalies` 返回 0 个，快照有几十行但价格全 NULL | 同花顺 getharden 在交易日 T 当天不返回价格字段（实测 T 日 17:14 仍未结算），须改为归因 T-1 |
 | T2 | 某股公告 0 条，HTTP 200 无报错 | 巨潮 orgId 用代码前缀猜测；603xxx 全部命中此坑，须改用 topSearch 解析 |
 | T3 | 同日公告的因果方向判反 | 巨潮部分公告只给日级精度（北京零点），未标 `ts_precision` |
 | T4 | 部分个股新闻语料整只缺失 | 东财接口偶发 read timeout，未重试；且需 0.6s 限流防封 |

@@ -79,13 +79,23 @@ python3 -m venv .venv
 
 依赖只有三个：`requests`、`duckdb`、`tzdata`（Windows 无系统时区库，必须显式带上）。
 
+要把本工具作为 **MCP 服务**挂载给别的 agent，额外装一个可选依赖：
+
+```bash
+uv pip install -e ".[mcp]"       # 或 .venv/bin/pip install -e ".[mcp]"
+```
+
+`mcp` 必须 `>=2,<3`：2.x 把 `FastMCP` 改名为 `MCPServer`，网上大量教程给的是 1.x 的
+`from mcp.server.fastmcp import FastMCP`，在 2.x 下直接 `ModuleNotFoundError`。
+
 ---
 
 ## 快速开始
 
 ```bash
 # 1. 摄取某个交易日的强势股快照并聚合题材热度
-#    ⚠️ 必须在北京时间 15:30 之后跑，盘中上游不返回价格字段
+#    ⚠️ 只能归因「上一个交易日」：同花顺的价格字段在 T 日 17:14 仍未结算，
+#    T+1 日 12:43 才实测可用。跑当日会被守卫拒绝写入，这是刻意设计。
 vest snapshot 2026-10-14
 
 # 2. 看异动题材排行
@@ -127,19 +137,80 @@ Windows 下把 `vest` 换成 `.venv\Scripts\vest`（或激活 venv 后直接用 
 
 ---
 
-## 作为 Qoder Skill 使用
+## 在其他 agent 中使用
 
-`skill/ashare-theme-attribution/` 是一个完整的 Qoder skill，把本工具包装成 agent 可直接调用的能力，内含数据源细节、研究卡字段规则、以及六个已实测的静默失败陷阱。
+本工具对第三方 agent 有两条接入路径，可并存。
 
-安装：
+### 1. MCP 服务（推荐，无需 shell）
+
+`vest-mcp` 是一个标准 MCP stdio server，暴露 7 个工具：`snapshot`、`anomalies`、
+`evidence`、`classify_timing`、`save_card`、`list_cards`、`review_card`。
+
+**任何支持 MCP 的客户端都能挂载**——Claude Desktop、Claude Code、Cursor、Windsurf、Zed、
+自建 agent 等。已用真实 MCP 客户端经 stdio 完成 `initialize` + `list_tools` + `call_tool`
+全流程验证（见 `tests/test_mcp_server.py`）。
+
+关键点：**MCP 的 `instructions` 字段会携带整套因果纪律**（六个分桶规则、编辑部标签属观点
+不属事实、必须写反方论证与可证伪观察点等）。移植的不只是函数，还有那套防事后归因的约束
+——只拿到函数而不知道纪律的 agent，照样会把收盘后的利好当成上涨原因。
+
+> **GUI 客户端必须用绝对路径。** 从 Dock/Finder 启动的 Claude Desktop 不继承你 shell 的
+> PATH，`uv run ...` 这类写法对它无效。下面示例统一用绝对路径。
+
+**Claude Desktop** — `claude_desktop_config.json`：
+
+```json
+{
+  "mcpServers": {
+    "vest": {
+      "command": "/绝对路径/到仓库/.venv/bin/vest-mcp"
+    }
+  }
+}
+```
+
+**Claude Code**：
 
 ```bash
+claude mcp add vest -- /绝对路径/到仓库/.venv/bin/vest-mcp
+```
+
+**Cursor** — `.cursor/mcp.json`，配置块与 Claude Desktop 相同。
+
+**通用 MCP 客户端** — 三种已验证的启动形式任选：
+
+| 形式 | 命令 |
+|---|---|
+| 绝对路径（最稳） | `<repo>/.venv/bin/vest-mcp` |
+| uv（需客户端进程能找到 uv） | `uv run --directory <repo> vest-mcp` |
+| 模块 | `<repo>/.venv/bin/python -m vest.mcp_server` |
+
+Windows 下把 `.venv/bin/` 换成 `.venv\Scripts\`。
+
+### 2. Agent Skill
+
+`skill/ashare-theme-attribution/` 遵循 **Anthropic Agent Skills 规范**（SKILL.md +
+`name`/`description` frontmatter + 渐进披露的 references 子文件），因此可直接用于
+Claude Code 与 Claude.ai；在 Qoder 中同样是原生 skill 格式。
+
+```bash
+# Claude Code / Claude.ai
+cp -R skill/ashare-theme-attribution ~/.claude/skills/
+
+# Qoder
 cp -R skill/ashare-theme-attribution ~/.qoder/skills/
 ```
 
-之后对 agent 说「跑今天的盘后归因」或「XX 概念为什么暴涨」即可触发。
+装好后对 agent 说「跑昨天的盘后归因」或「XX 概念为什么暴涨」即可触发。
 
-即使 vest 未安装，skill 内的 `scripts/bucket_evidence.py` 也能独立运行（仅标准库，Python 3.9+），保证时间分桶这一步不会被心算替代。
+skill 内含数据源端点与字段映射、研究卡逐字段规则、六个已实测的静默失败陷阱及自检命令。
+即使 `vest` 完全没装，skill 里的 `scripts/bucket_evidence.py` 也能独立运行（仅标准库，
+Python 3.9+），保证时间分桶这一步不会被心算替代。
+
+### 3. 纯 CLI
+
+任何有 shell 的 agent 都能直接用 `vest` 命令，无需 MCP 也无需 skill。
+仓库根的 [`AGENTS.md`](AGENTS.md) 是写给这类 agent 的说明，格式与内容不绑定任何厂商。
 
 ---
 
@@ -161,6 +232,7 @@ cp -R skill/ashare-theme-attribution ~/.qoder/skills/
 
 ## 已知局限
 
+- **数据有 T+1 延迟。** 同花顺热点接口的价格字段要到交易日 T 的 17:14 之后、T+1 的 12:43 之前的某个时点才结算（实测，确切边界未知）。因此**只能归因上一个交易日**，无法当日出结论。`snapshot` 对未结算日会抛错拒绝写入 NULL 价格——若放宽，`anomalies` 会静默返回 0 个异动，症状与「当天真没异动」完全相同。
 - **仅支持 A 股。** 09:30/15:00 交易时段与北京时间假设是硬编码的。
 - **冷启动阶段无 z-score。** 异动检测目前用固定阈值规则，需积累 ≥20 个交易日快照后才启用与自身历史对比的分支。`anomalies` 输出里的 `zscore_available` 会如实标注当前状态。
 - **归因质量取决于 LLM 层。** 时间分桶是确定性的，但四分类、反方论证、基本面判定都是 agent 的判断，不是可复现的算法输出。研究卡的 `review_at` 回看机制是用来校准它的，不是用来替代它的。
@@ -173,14 +245,17 @@ cp -R skill/ashare-theme-attribution ~/.qoder/skills/
 ## 项目结构
 
 ```
+├── AGENTS.md          # 写给任意 agent 的使用说明（不绑定厂商）
 ├── src/vest/
 │   ├── sources.py     # 三个零鉴权数据源适配器（含 orgId 解析、限流、重试）
 │   ├── store.py       # DuckDB schema 与幂等 upsert
 │   ├── snapshot.py    # 每日快照摄取 + 题材词频聚合
 │   ├── attribute.py   # 时间因果分桶、异动检测、证据召回、研究卡
-│   └── cli.py         # 命令行入口
+│   ├── cli.py         # 命令行入口
+│   └── mcp_server.py  # MCP stdio server（可选 [mcp] extra）
 ├── tests/
-│   └── test_timing.py # 分桶边界与跨时区不变性回归测试
+│   ├── test_timing.py    # 分桶边界与跨时区不变性回归测试
+│   └── test_mcp_server.py# 工具注册 + 真实 stdio 握手
 ├── cards/             # 研究卡 JSON
 ├── data/              # DuckDB（不进版本库）
 └── skill/
@@ -196,6 +271,9 @@ cp -R skill/ashare-theme-attribution ~/.qoder/skills/
 ```bash
 python3 -m unittest discover -s tests -p "test_*.py" -v
 ```
+
+13 项。其中 4 项需要可选 `mcp` extra，未安装时自动跳过；包含一次真实 MCP stdio 握手，
+因此 `initialize` / `list_tools` / `call_tool` 是被端到端验证的，不是声称可用。
 
 其中 `TestTimezoneInvariance` 跨 4 个宿主机时区断言分桶结果一致——这曾是一个真实缺陷：按宿主机时区解释 Unix 毫秒，会让 UTC 机器上的日级精度公告被误标为秒级，从而把「先后不可判定」洗白成「可作为原因」。
 
